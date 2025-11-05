@@ -7,16 +7,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import wxPusher
 import contextAnalyze
+import config
 
 # 配置日志记录器
-logging.basicConfig(filename='xwlb.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename=config.LOG_FILE, level=getattr(logging, config.LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
 
-start_day = "20250101"
-end_day = "current"
-# 配置参数
-APP_TOKEN = "AT_yqnyoG262pwdmA6esDdvyp804v74jsrK"  # xwlb专用 APP_TOKEN
-USER_UIDS = ["UID_wKraNNh5OPgSq2kP0neChHsNC3Sd"]
-APP_KEY = 96458
+# 从配置文件获取参数
+start_day = config.START_DAY
+end_day = config.END_DAY
+WECHAT_APP_ID = config.WECHAT_APP_ID
+WECHAT_APP_SECRET = config.WECHAT_APP_SECRET
 # 创建一个锁对象
 lock = threading.Lock()
 
@@ -70,7 +70,7 @@ def get_last_month_date_range():
     last_month_first_day = last_month_last_day.replace(day=1)
     return last_month_first_day, last_month_last_day
 
-def perform_keyword_analysis_and_send_images(userUids, app_token, input_files, image_filenames, topicIds):
+def perform_keyword_analysis_and_send_images(app_id, app_secret, input_files, image_filenames):
     logging.info("今天是月初，进行关键字分析总结")
     contextAnalyze.analyze_json_file()
     last_month_first_day, last_month_last_day = get_last_month_date_range()
@@ -92,7 +92,12 @@ def perform_keyword_analysis_and_send_images(userUids, app_token, input_files, i
         keyword_counts_list.append(keyword_counts)
         try:
             contextAnalyze.plot_wordcloud(keyword_counts, image_filename_with_month)
-            wxPusher.send_wxpusher_image(image_filename_with_month, userUids, app_token, topicIds, current_month + titleName[image_filename])
+            # 使用微信公众号API发送图片
+            result = wxPusher.send_wechat_image(image_filename_with_month, app_id, app_secret, current_month + titleName[image_filename])
+            if result["success"]:
+                logging.info(f"图片文章发布成功: {image_filename_with_month}")
+            else:
+                logging.error(f"图片文章发布失败: {result['message']}")
         except Exception as e:
             logging.info(f"生成或推送图片异常：{str(e) + image_filename_with_month}")
 
@@ -143,13 +148,17 @@ if __name__ == "__main__":
     readNews = jsonFile.load_from_json(end_day)
     # 新增：将readNews列表中的每个元素拼接成一个字符串
     readNews_str = join_list_with_newline(readNews)
-    userUids = wxPusher.get_subscribed_uids(APP_TOKEN, APP_KEY)
-    result = wxPusher.send_wxpusher_message(readNews_str, userUids, APP_TOKEN, [38685], end_day + "新闻联播内容")
-    logging.info("推送结果: %s", result)
+    
+    # 使用微信公众号API发送文章
+    title = f"{end_day}新闻联播内容"
+    result = wxPusher.send_wechat_article(title, readNews_str, WECHAT_APP_ID, WECHAT_APP_SECRET)
+    if result["success"]:
+        logging.info(f"文章发布成功: {title}")
+    else:
+        logging.error(f"文章发布失败: {result['message']}")
 
     # 每个月初进行一次关键字分析总结
     if is_start_of_month():
-        input_files = ["key_name.json", "key_place.json", "key_words.json"]
-        image_filenames = ["name_cloud.png", "place_cloud.png", "words_cloud.png"]
-        topicIds = [39053]
-        perform_keyword_analysis_and_send_images(userUids, APP_TOKEN, input_files, image_filenames, topicIds)
+        input_files = [config.KEY_NAME_FILE, config.KEY_PLACE_FILE, config.KEY_WORDS_FILE]
+        image_filenames = [config.NAME_CLOUD_FILE, config.PLACE_CLOUD_FILE, config.WORDS_CLOUD_FILE]
+        perform_keyword_analysis_and_send_images(WECHAT_APP_ID, WECHAT_APP_SECRET, input_files, image_filenames)
